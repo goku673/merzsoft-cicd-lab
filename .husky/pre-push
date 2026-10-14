@@ -1,0 +1,181 @@
+
+#!/bin/sh
+
+# ==========================================
+# MERZSOFT - PRE-PUSH VALIDATION
+# ==========================================
+
+set -eu
+
+# ------------------------------------------
+# 1. FUNCIONES DE MENSAJES
+# ------------------------------------------
+
+info() {
+  printf '\n[INFO] %s\n' "$1"
+}
+
+success() {
+  printf '[OK] %s\n' "$1"
+}
+
+error() {
+  printf '\n[ERROR] %s\n' "$1" >&2
+  exit 1
+}
+
+# ------------------------------------------
+# 2. CONFIGURACION
+# ------------------------------------------
+
+REMOTE_NAME="${1:-}"
+
+BRANCH_PATTERN='^(feature|bugfix|hotfix|docs|refactor|test|chore|ci|perf)/ms-[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
+
+info "Iniciando validaciones de MerzSoft"
+
+# ------------------------------------------
+# 3. VALIDAR REMOTO
+# ------------------------------------------
+
+if [ "$REMOTE_NAME" != "origin" ]; then
+  error "Solo se permiten pushes hacia origin."
+fi
+
+success "Remote autorizado: $REMOTE_NAME"
+
+# ------------------------------------------
+# 4. VALIDAR HERRAMIENTAS
+# ------------------------------------------
+
+command -v git >/dev/null 2>&1 ||
+  error "Git no esta disponible."
+
+command -v pnpm >/dev/null 2>&1 ||
+  error "pnpm no esta instalado."
+
+success "Herramientas disponibles"
+
+# ------------------------------------------
+# 5. OBTENER RAMA ACTUAL
+# ------------------------------------------
+
+CURRENT_BRANCH=$(
+  git symbolic-ref --quiet --short HEAD
+) || error "No se permite push desde detached HEAD."
+
+info "Rama actual: $CURRENT_BRANCH"
+
+# ------------------------------------------
+# 6. VALIDAR REFERENCIAS DEL PUSH
+# ------------------------------------------
+
+REF_COUNT=0
+
+while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA
+do
+  [ -n "$LOCAL_REF" ] || continue
+
+  REF_COUNT=$((REF_COUNT + 1))
+
+  # Bloquear eliminaciones
+  if [ "$LOCAL_REF" = "(delete)" ]; then
+    error "No se permite eliminar ramas remotas."
+  fi
+
+  # Bloquear tags y otras referencias
+  case "$REMOTE_REF" in
+    refs/heads/*)
+      TARGET_BRANCH="${REMOTE_REF#refs/heads/}"
+      ;;
+    *)
+      error "Solo se permite subir ramas."
+      ;;
+  esac
+
+  # Proteger ramas principales
+  case "$TARGET_BRANCH" in
+    main|develop)
+      error "Push directo a $TARGET_BRANCH prohibido. Utiliza Pull Request."
+      ;;
+  esac
+
+  # Resolver la rama de origen
+  case "$LOCAL_REF" in
+    refs/heads/*)
+      SOURCE_BRANCH="${LOCAL_REF#refs/heads/}"
+      ;;
+    HEAD)
+      SOURCE_BRANCH="$CURRENT_BRANCH"
+      ;;
+    *)
+      error "Origen de push no permitido: $LOCAL_REF"
+      ;;
+  esac
+
+  # Exigir que se suba la rama actual
+  if [ "$SOURCE_BRANCH" != "$CURRENT_BRANCH" ]; then
+    error "Solo puedes subir la rama actual."
+  fi
+
+  # No permitir renombrar la rama en destino
+  if [ "$SOURCE_BRANCH" != "$TARGET_BRANCH" ]; then
+    error "La rama de origen y destino deben coincidir."
+  fi
+
+  # Convencion MerzSoft
+  if ! printf '%s\n' "$TARGET_BRANCH" |
+    LC_ALL=C grep -Eq "$BRANCH_PATTERN"
+  then
+    error "Nombre de rama no permitido: $TARGET_BRANCH"
+  fi
+
+  success "Rama autorizada: $TARGET_BRANCH"
+
+done
+
+# Exigir una unica rama por push
+if [ "$REF_COUNT" -ne 1 ]; then
+  error "Debes subir una sola rama por operacion."
+fi
+
+# ------------------------------------------
+# 7. VALIDAR ESTADO DE GIT
+# ------------------------------------------
+
+info "Comprobando estado del repositorio"
+
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+  git status --short
+  error "Existen cambios sin commit. Confirmalos antes de hacer push."
+fi
+
+success "Repositorio limpio"
+
+# ------------------------------------------
+# 8. EJECUTAR VALIDACIONES
+# ------------------------------------------
+
+info "Ejecutando ESLint, Prettier, TypeScript y Build"
+
+if ! pnpm check:full; then
+  error "Las validaciones de calidad fallaron. Push cancelado."
+fi
+
+success "Todas las validaciones finalizaron correctamente"
+
+# ------------------------------------------
+# 9. COMPROBACION FINAL
+# ------------------------------------------
+
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+  error "Las validaciones modificaron archivos. Revisa el repositorio."
+fi
+
+printf '\n==========================================\n'
+printf ' MERZSOFT - PUSH AUTORIZADO\n'
+printf ' Rama: %s\n' "$CURRENT_BRANCH"
+printf ' Todas las validaciones: OK\n'
+printf '==========================================\n\n'
+
+exit 0

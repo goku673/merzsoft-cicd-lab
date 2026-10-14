@@ -1,0 +1,25 @@
+
+# Dependencias
+node_modules/
+.ignored_node_modules/
+
+# Compilación
+dist/
+build/
+coverage/
+
+# Pruebas
+test-results/
+playwright-report/
+
+# Archivos generados
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Variables de entorno
+.env
+.env.*
+
+playwright-report/
+test-results/

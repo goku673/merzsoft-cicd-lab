@@ -22,3 +22,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Dependencias residuales
+.ignored_node_modules/
+
+# Archivos generados por TypeScript
+*.tsbuildinfo
+
+# Compilación
+dist/
+
+
+playwright-report/
+test-results/
