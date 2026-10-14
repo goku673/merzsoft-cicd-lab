@@ -20,3 +20,6 @@ yarn.lock
 # Variables de entorno
 .env
 .env.*
+
+playwright-report/
+test-results/
