@@ -36,8 +36,105 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      # ------------------------------------------
+      # 1. VALIDAR RAMAS Y DESTINOS
+      # ------------------------------------------
+
+      - name: Validate branch naming and PR target
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+          BASE_BRANCH: ${{ github.base_ref }}
+          REF_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          BRANCH_PATTERN='^(feature|bugfix|docs|refactor|test|chore|ci|perf)/ms-[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
+
+          HOTFIX_PATTERN='^hotfix/ms-[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          echo "======================================"
+          echo " MERZSOFT - BRANCH POLICY VALIDATION"
+          echo "======================================"
+
+          echo "Event: $EVENT_NAME"
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+
+            echo "Source: $HEAD_BRANCH"
+            echo "Target: $BASE_BRANCH"
+
+            case "$BASE_BRANCH" in
+
+              develop)
+                if [[ "$HEAD_BRANCH" == "main" ]]; then
+                  echo "Main to develop synchronization authorized."
+
+                elif [[ "$HEAD_BRANCH" =~ $BRANCH_PATTERN ]]; then
+                  echo "Development branch authorized."
+
+                else
+                  fail "Branch $HEAD_BRANCH cannot merge into develop."
+                fi
+                ;;
+
+              main)
+                if [[ "$HEAD_BRANCH" == "develop" ]]; then
+                  echo "Sprint release authorized."
+
+                elif [[ "$HEAD_BRANCH" =~ $HOTFIX_PATTERN ]]; then
+                  echo "Production hotfix authorized."
+
+                else
+                  fail "Only develop or hotfix/* can merge into main."
+                fi
+                ;;
+
+              *)
+                fail "Unauthorized target branch: $BASE_BRANCH"
+                ;;
+
+            esac
+
+          else
+
+            echo "Branch: $REF_BRANCH"
+
+            if [[ "$REF_BRANCH" == "main" || "$REF_BRANCH" == "develop" ]]; then
+              echo "Protected branch recognized."
+
+            elif [[ "$REF_BRANCH" =~ $BRANCH_PATTERN ]]; then
+              echo "Development branch authorized."
+
+            elif [[ "$REF_BRANCH" =~ $HOTFIX_PATTERN ]]; then
+              echo "Hotfix branch authorized."
+
+            else
+              fail "Invalid MerzSoft branch name: $REF_BRANCH"
+            fi
+
+          fi
+
+          echo "Branch policy validation passed."
+
+      # ------------------------------------------
+      # 2. OBTENER CODIGO
+      # ------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # ------------------------------------------
+      # 3. CONFIGURAR PNPM
+      # ------------------------------------------
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -45,23 +142,49 @@ jobs:
           version: 10.16.1
           run_install: false
 
+      # ------------------------------------------
+      # 4. CONFIGURAR NODE.JS
+      # ------------------------------------------
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22.19.0'
           cache: pnpm
 
+      # ------------------------------------------
+      # 5. INSTALAR DEPENDENCIAS
+      # ------------------------------------------
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # ------------------------------------------
+      # 6. VALIDACIONES DE CALIDAD
+      # ESLINT + PRETTIER + TYPESCRIPT
+      # VITEST + BUILD
+      # ------------------------------------------
 
       - name: Run quality checks
         run: pnpm check:full
 
+      # ------------------------------------------
+      # 7. INSTALAR CHROMIUM
+      # ------------------------------------------
+
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      # ------------------------------------------
+      # 8. PRUEBAS E2E
+      # ------------------------------------------
+
       - name: Run E2E tests
         run: pnpm test:e2e
+
+      # ------------------------------------------
+      # 9. REPORTES PARA QA
+      # ------------------------------------------
 
       - name: Upload Playwright report
         if: always()
